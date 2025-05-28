@@ -4,8 +4,9 @@ import { Attestation, Schema } from "@prisma/client";
 import dayjs from "dayjs";
 import pLimit from "p-limit";
 import { Eas__factory, EasSchema__factory } from "./types/ethers-contracts";
-import { SchemaEncoder } from "@ethereum-attestation-service/eas-sdk";
+import {AttestationShareablePackageObject, EAS, Offchain, OffchainConfig, SchemaEncoder, ZERO_ADDRESS } from "@ethereum-attestation-service/eas-sdk";
 import * as fs from "fs";
+import { JsonRpcApiPollingProvider } from "ethers/lib.commonjs/providers/provider-jsonrpc";
 
 const batchSize = process.env.BATCH_SIZE
   ? Number(process.env.BATCH_SIZE)
@@ -330,9 +331,12 @@ export const timestampEventSignature = "Timestamped(bytes32,uint64)";
 export const schemaNameUID =
   "0x44d562ac1d7cd77e232978687fea027ace48f719cf1d58c7888e509663bb87fc"; // Sepolia v0.25
 
-export const provider = new ethers.providers.StaticJsonRpcProvider(
+export const provider = new ethers.JsonRpcProvider(
   activeChainConfig.rpcProvider,
-  activeChainConfig.chainId
+  activeChainConfig.chainId , {
+    staticNetwork: null,
+    polling: true
+  }
 );
 
 const schemaContract = EasSchema__factory.connect(
@@ -347,9 +351,9 @@ function timeout(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-const safeToNumber = (num: ethers.BigNumber) => {
+const safeToNumber = (num: BigInt) => {
   try {
-    const tmpNum = num.toNumber();
+    const tmpNum = Number(num);
     if (tmpNum > 2147483647) {
       return 2147483647;
     } else {
@@ -364,16 +368,16 @@ const safeToNumber = (num: ethers.BigNumber) => {
 };
 
 export async function getFormattedAttestationFromLog(
-  log: ethers.providers.Log
+  log: ethers.Log
 ): Promise<Attestation | null> {
-  let UID = ethers.constants.HashZero;
-  let schemaUID = ethers.constants.HashZero;
-  let refUID = ethers.constants.HashZero;
-  let time = ethers.BigNumber.from(0);
-  let expirationTime = ethers.BigNumber.from(0);
-  let revocationTime = ethers.BigNumber.from(0);
-  let recipient = ethers.constants.AddressZero;
-  let attester = ethers.constants.AddressZero;
+  let UID = ethers.ZeroAddress;
+  let schemaUID = ethers.ZeroAddress;
+  let refUID = ethers.ZeroAddress;
+  let time = BigInt(0);
+  let expirationTime = BigInt(0);
+  let revocationTime = BigInt(0);
+  let recipient = ethers.ZeroAddress;
+  let attester = ethers.ZeroAddress;
   let revocable = false;
   let data = "";
 
@@ -400,13 +404,13 @@ export async function getFormattedAttestationFromLog(
       data,
     ] = await easContract.getAttestation(log.data);
 
-    if (UID === ethers.constants.HashZero) {
+    if (UID === ethers.ZeroAddress) {
       console.log(`Delaying attestation poll after try #${tries}...`);
       await timeout(500);
     }
 
     tries++;
-  } while (UID === ethers.constants.HashZero);
+  } while (UID === ethers.ZeroAddress);
 
   let decodedDataJson = "";
 
@@ -434,9 +438,9 @@ export async function getFormattedAttestationFromLog(
     refUID: refUID,
     revocationTime: safeToNumber(revocationTime),
     expirationTime: safeToNumber(expirationTime),
-    time: time.toNumber(),
+    time: Number(time),
     txid: log.transactionHash,
-    revoked: revocationTime.lt(dayjs().unix()) && !revocationTime.isZero(),
+    revoked: (revocationTime < BigInt(dayjs().unix())) && (revocationTime !== BigInt(0)),
     isOffchain: false,
     ipfsHash: "",
     timeCreated: dayjs().unix(),
@@ -446,10 +450,10 @@ export async function getFormattedAttestationFromLog(
 }
 
 export async function getFormattedSchemaFromLog(
-  log: ethers.providers.Log
+  log: ethers.Log
 ): Promise<Omit<Schema, "index">> {
-  let UID = ethers.constants.HashZero;
-  let resolver = ethers.constants.AddressZero;
+  let UID = ethers.ZeroHash;
+  let resolver = ethers.ZeroAddress;
   let revocable = false;
   let schema = "";
 
@@ -467,13 +471,13 @@ export async function getFormattedSchemaFromLog(
       log.topics[1]
     );
 
-    if (UID === ethers.constants.HashZero) {
+    if (UID === ethers.ZeroHash) {
       console.log(`Delaying schema poll after try #${tries}...`);
       await timeout(500);
     }
 
     tries++;
-  } while (UID === ethers.constants.HashZero);
+  } while (UID === ethers.ZeroHash);
 
   const block = await provider.getBlock(log.blockNumber);
   const tx = await provider.getTransaction(log.transactionHash);
@@ -481,15 +485,15 @@ export async function getFormattedSchemaFromLog(
   return {
     id: UID,
     schema: schema,
-    creator: tx.from,
+    creator: tx!.from,
     resolver,
-    time: block.timestamp,
+    time: block!.timestamp,
     txid: log.transactionHash,
     revocable,
   };
 }
 
-export async function revokeAttestationsFromLogs(logs: ethers.providers.Log[]) {
+export async function revokeAttestationsFromLogs(logs: ethers.Log[]) {
   for (let log of logs) {
     const attestation = await easContract.getAttestation(log.data);
 
@@ -513,7 +517,7 @@ export async function revokeAttestationsFromLogs(logs: ethers.providers.Log[]) {
       where: { id: attestation[0] },
       data: {
         revoked: true,
-        revocationTime: attestation.revocationTime.toNumber(),
+        revocationTime: Number(attestation.revocationTime),
       },
     });
 
@@ -521,7 +525,7 @@ export async function revokeAttestationsFromLogs(logs: ethers.providers.Log[]) {
   }
 }
 
-export async function createSchemasFromLogs(logs: ethers.providers.Log[]) {
+export async function createSchemasFromLogs(logs: ethers.Log[]) {
   const promises = logs.map((log) =>
     limit(() => getFormattedSchemaFromLog(log))
   );
@@ -544,7 +548,7 @@ export async function createSchemasFromLogs(logs: ethers.providers.Log[]) {
   }
 }
 
-export async function createAttestationsForLogs(logs: ethers.providers.Log[]) {
+export async function createAttestationsForLogs(logs: ethers.Log[]) {
   const promises = logs.map((log) =>
     limit(() => getFormattedAttestationFromLog(log))
   );
@@ -572,11 +576,11 @@ export async function createAttestationsForLogs(logs: ethers.providers.Log[]) {
 }
 
 export async function createOffchainRevocationsForLogs(
-  logs: ethers.providers.Log[]
+  logs: ethers.Log[]
 ) {
   for (let log of logs) {
     const uid = log.topics[2];
-    const timestamp = ethers.BigNumber.from(log.topics[3]).toNumber();
+    const timestamp = Number(BigInt(log.topics[3]));
     console.log("Creating new offchainrevoke Log for", uid, timestamp);
 
     const tx = await provider.getTransaction(log.transactionHash);
@@ -585,13 +589,13 @@ export async function createOffchainRevocationsForLogs(
       data: {
         timestamp,
         uid,
-        from: tx.from,
+        from: tx!.from,
         txid: log.transactionHash,
       },
     });
 
     await prisma.attestation.updateMany({
-      where: { id: uid, isOffchain: true, attester: tx.from },
+      where: { id: uid, isOffchain: true, attester: tx!.from },
       data: {
         revoked: true,
         revocationTime: newRevocation.timestamp,
@@ -600,10 +604,10 @@ export async function createOffchainRevocationsForLogs(
   }
 }
 
-export async function createTimestampForLogs(logs: ethers.providers.Log[]) {
+export async function createTimestampForLogs(logs: ethers.Log[]) {
   for (let log of logs) {
     const uid = log.topics[1];
-    const timestamp = ethers.BigNumber.from(log.topics[2]).toNumber();
+    const timestamp = Number(BigInt(log.topics[2]));
     console.log("Creating new Log for", uid, timestamp);
 
     const tx = await provider.getTransaction(log.transactionHash);
@@ -612,7 +616,7 @@ export async function createTimestampForLogs(logs: ethers.providers.Log[]) {
       data: {
         id: uid,
         timestamp,
-        from: tx.from,
+        from: tx!.from,
         txid: log.transactionHash,
       },
     });
@@ -624,7 +628,7 @@ export async function processRevokedAttestation(
 ): Promise<void> {
   if (attestation.schemaId === schemaNameUID) {
     try {
-      const decodedNameAttestationData = ethers.utils.defaultAbiCoder.decode(
+      const decodedNameAttestationData = ethers.AbiCoder.defaultAbiCoder().decode(
         ["bytes32", "string"],
         attestation.data
       );
@@ -656,7 +660,7 @@ export async function processCreatedAttestation(
 ): Promise<void> {
   if (attestation.schemaId === schemaNameUID) {
     try {
-      const decodedNameAttestationData = ethers.utils.defaultAbiCoder.decode(
+      const decodedNameAttestationData = ethers.AbiCoder.defaultAbiCoder().decode(
         ["bytes32", "string"],
         attestation.data
       );
@@ -730,23 +734,23 @@ async function getStartData(serviceStatPropertyName: string) {
   return { latestBlockNumServiceStat, fromBlock };
 }
 
-export async function updateDbFromRelevantLog(log: ethers.providers.Log) {
+export async function updateDbFromRelevantLog(log: ethers.Log) {
   if (log.address === EASSchemaRegistryAddress) {
     if (
-      log.topics[0] === ethers.utils.id(registeredEventSignatureV1) ||
-      log.topics[0] === ethers.utils.id(registeredEventSignatureV2)
+      log.topics[0] === ethers.id(registeredEventSignatureV1) ||
+      log.topics[0] === ethers.id(registeredEventSignatureV2)
     ) {
       await createSchemasFromLogs([log]);
     }
   } else if (log.address === EASContractAddress) {
-    if (log.topics[0] === ethers.utils.id(attestedEventSignature)) {
+    if (log.topics[0] === ethers.id(attestedEventSignature)) {
       await createAttestationsForLogs([log]);
-    } else if (log.topics[0] === ethers.utils.id(revokedEventSignature)) {
+    } else if (log.topics[0] === ethers.id(revokedEventSignature)) {
       await revokeAttestationsFromLogs([log]);
-    } else if (log.topics[0] === ethers.utils.id(timestampEventSignature)) {
+    } else if (log.topics[0] === ethers.id(timestampEventSignature)) {
       await createTimestampForLogs([log]);
     } else if (
-      log.topics[0] === ethers.utils.id(revokedOffchainEventSignature)
+      log.topics[0] === ethers.id(revokedOffchainEventSignature)
     ) {
       await createOffchainRevocationsForLogs([log]);
     }
@@ -755,10 +759,10 @@ export async function updateDbFromRelevantLog(log: ethers.providers.Log) {
 
 export async function getAndUpdateAllRelevantLogs() {
   const eventSignatures = [
-    ethers.utils.id(revokedEventSignature),
-    ethers.utils.id(revokedOffchainEventSignature),
-    ethers.utils.id(attestedEventSignature),
-    ethers.utils.id(timestampEventSignature),
+    ethers.id(revokedEventSignature),
+    ethers.id(revokedOffchainEventSignature),
+    ethers.id(attestedEventSignature),
+    ethers.id(timestampEventSignature),
   ];
 
   const serviceStatPropertyName = "latestAttestationBlockNum";
@@ -768,7 +772,7 @@ export async function getAndUpdateAllRelevantLogs() {
   let currentBlock = fromBlock + 1;
   const latestBlock = await provider.getBlockNumber();
 
-  let allLogs: ethers.providers.Log[] = [];
+  let allLogs: ethers.Log[] = [];
 
   while (currentBlock <= latestBlock) {
     const toBlock = Math.min(currentBlock + batchSize - 1, latestBlock);
@@ -783,8 +787,8 @@ export async function getAndUpdateAllRelevantLogs() {
       toBlock,
       topics: [
         [
-          ethers.utils.id(registeredEventSignatureV1),
-          ethers.utils.id(registeredEventSignatureV2),
+          ethers.id(registeredEventSignatureV1),
+          ethers.id(registeredEventSignatureV2),
         ],
       ],
     });
@@ -832,4 +836,82 @@ export async function updateDbFromEthTransaction(txId: string) {
   }
 
   console.log("Processed logs for tx", txId);
+}
+
+ export async function storeOffchainAttestation(pkg: AttestationShareablePackageObject) { 
+  const sanitizedPkg = JSON.stringify(pkg).replace(/[\n\r]/g, "");
+  console.log("Storing offchain attestation", sanitizedPkg);
+
+  const config: OffchainConfig = {
+    address: pkg.sig.domain.verifyingContract,
+    version: pkg.sig.domain.version,
+    chainId: BigInt(pkg.sig.domain.chainId)
+  };
+
+  const offchain = new Offchain(config, pkg.sig.message.version, new EAS(ZERO_ADDRESS));  
+  const isValidAttestation = offchain.verifyOffchainAttestationSignature(pkg.signer, pkg.sig);
+
+  if (!isValidAttestation) {
+    const sanitizedSig = JSON.stringify(pkg.sig).replace(/\n|\r/g, "");
+    console.log("Invalid offchain attestation signature", sanitizedSig);
+    throw new Error("Invalid offchain attestation signature");
+  }
+
+  const sanitizedTime = String(pkg.sig.message.time).replace(/\n|\r/g, "");
+  if (Number(sanitizedTime) < dayjs().startOf("day").unix()) {
+    console.log("Offchain attestation is too old", sanitizedTime);
+    throw new Error("Offchain attestation is too old");
+  }
+
+  // Get Offichain Attestatino from pkg
+  let decodedDataJson = "";
+
+  try {
+    const schema = await prisma.schema.findUnique({
+      where: { id: pkg.sig.message.schema },
+    });
+
+    if (!schema) {
+      throw new Error("Schema not found for offchain attestation");
+    }
+
+    const schemaEncoder = new SchemaEncoder(schema.schema);
+    decodedDataJson = JSON.stringify(schemaEncoder.decodeData(pkg.sig.message.data));
+  } catch (error) {
+    throw new Error("Error decoding offchain attestation data: " + error);
+  }
+
+  try {
+    const attestation = await prisma.attestation.findUnique({
+      where: { id: pkg.sig.uid },
+    });
+
+    if (attestation) {
+      throw new Error("Offchain attestation already exists with ID: " + pkg.sig.uid);
+    }    
+  } catch (error) {
+    throw new Error("Error checking for existing offchain attestation: " + error);
+  }
+
+  let offchainAttestation = {
+    id: pkg.sig.uid,
+    schemaId: pkg.sig.message.schema,
+    data: pkg.sig.message.data,
+    attester: pkg.signer,
+    recipient: pkg.sig.message.recipient,
+    refUID: pkg.sig.message.refUID,
+    revocationTime: Number(0),
+    expirationTime: Number(pkg.sig.message.expirationTime),
+    time: Number(pkg.sig.message.time),
+    txid: "", // Offchain attestations do not have a txid,
+    revoked: false,
+    isOffchain: true,
+    ipfsHash: "",
+    timeCreated: Number(pkg.sig.message.time),
+    revocable: pkg.sig.message.revocable,
+    decodedDataJson,
+  };
+
+  await prisma.attestation.create({ data: offchainAttestation });
+  return offchainAttestation;
 }

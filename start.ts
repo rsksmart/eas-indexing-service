@@ -54,18 +54,18 @@ async function go() {
 const filter = {
   topics: [
     [
-      ethers.utils.id(registeredEventSignatureV1),
-      ethers.utils.id(registeredEventSignatureV2),
-      ethers.utils.id(attestedEventSignature),
-      ethers.utils.id(revokedEventSignature),
-      ethers.utils.id(timestampEventSignature),
-      ethers.utils.id(revokedOffchainEventSignature),
+      ethers.id(registeredEventSignatureV1),
+      ethers.id(registeredEventSignatureV2),
+      ethers.id(attestedEventSignature),
+      ethers.id(revokedEventSignature),
+      ethers.id(timestampEventSignature),
+      ethers.id(revokedOffchainEventSignature),
     ],
   ],
 };
 
 if (!DISABLE_LISTENER) {
-  provider.on(filter, async (log: ethers.providers.Log) => {
+  provider.on(filter, async (log: ethers.Log) => {
     go();
   });
 }
