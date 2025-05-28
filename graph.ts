@@ -10,8 +10,11 @@ import {
   buildSchema,
   UseMiddleware,
 } from "type-graphql";
-import { ApolloServer } from "apollo-server";
+import { ApolloServer } from "@apollo/server";
+import express from "express";
 import { prisma } from "./db.server";
+import { expressMiddleware } from '@apollo/server/express4';
+import { storeOffchainAttestation } from "./utils";
 
 const PORT = process.env.GRAPH_PORT || 4000;
 
@@ -138,13 +141,52 @@ export async function startGraph() {
     authChecker: customAuthChecker,
   });
 
+  const app = express();
+  app.use(express.json());
+
+  app.post("/offchain/store", async (req, res) => {
+    try {
+      
+      if (!req.body.textJson) {
+        return res.status(400).json({ error: "textJson is required" });
+      }
+      
+      let parsedJson;
+      try {
+        parsedJson = typeof req.body.textJson === "string"
+          ? JSON.parse(req.body.textJson)
+          : req.body.textJson;
+      } catch (parseError) {
+        return res.status(400).json({ error: "Invalid JSON in textJson" });
+      }
+      const attestation = await storeOffchainAttestation(parsedJson);
+        
+      res.json({ status: "ok", attestation });
+    }
+    catch (error) {
+      console.error("Error storing offchain attestation:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   const server = new ApolloServer({
     schema: schema,
     cache: "bounded",
     introspection: true,
-    context: () => ({ prisma }),
   });
 
-  const { url } = await server.listen(PORT);
-  console.log(`Server is running, GraphQL Playground available at ${url}`);
+  await server.start();
+  app.use(
+    '/graphql',
+    express.json({limit: '100kb'}),
+    expressMiddleware(server, {
+      context: async () => ({ prisma }),
+    })
+  );
+
+  app.listen(PORT, () => {
+    console.log(`GraphQL en http://localhost:${PORT}/graphql`);
+    console.log(`REST en http://localhost:${PORT}/offchain/store`);
+  });
 }
+
