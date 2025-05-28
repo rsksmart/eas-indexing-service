@@ -839,7 +839,8 @@ export async function updateDbFromEthTransaction(txId: string) {
 }
 
  export async function storeOffchainAttestation(pkg: AttestationShareablePackageObject) { 
-  console.log("Storing offchain attestation", pkg);
+  const sanitizedPkg = JSON.stringify(pkg).replace(/[\n\r]/g, "");
+  console.log("Storing offchain attestation", sanitizedPkg);
 
   const config: OffchainConfig = {
     address: pkg.sig.domain.verifyingContract,
@@ -851,12 +852,14 @@ export async function updateDbFromEthTransaction(txId: string) {
   const isValidAttestation = offchain.verifyOffchainAttestationSignature(pkg.signer, pkg.sig);
 
   if (!isValidAttestation) {
-    console.log("Invalid offchain attestation signature", pkg.sig);
+    const sanitizedSig = JSON.stringify(pkg.sig).replace(/\n|\r/g, "");
+    console.log("Invalid offchain attestation signature", sanitizedSig);
     throw new Error("Invalid offchain attestation signature");
   }
 
-  if (pkg.sig.message.time < dayjs().startOf("day").unix()) {
-    console.log("Offchain attestation is too old", pkg.sig.message.time);
+  const sanitizedTime = String(pkg.sig.message.time).replace(/\n|\r/g, "");
+  if (Number(sanitizedTime) < dayjs().startOf("day").unix()) {
+    console.log("Offchain attestation is too old", sanitizedTime);
     throw new Error("Offchain attestation is too old");
   }
 

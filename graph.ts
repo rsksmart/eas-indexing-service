@@ -164,7 +164,8 @@ export async function startGraph() {
       res.json({ status: "ok", attestation });
     }
     catch (error) {
-      console.error("Error storing offchain attestation:", error);
+      const sanitizedError = typeof error === "string" ? error.replace(/\n|\r/g, "") : JSON.stringify(error).replace(/\n|\r/g, "");
+      console.error("Error storing offchain attestation:", sanitizedError);      
       res.status(500).json({ error: "Internal server error" });
     }
   });
