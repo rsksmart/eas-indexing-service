@@ -424,7 +424,10 @@ export async function getFormattedAttestationFromLog(
     }
 
     const schemaEncoder = new SchemaEncoder(schema.schema);
-    decodedDataJson = JSON.stringify(schemaEncoder.decodeData(data));
+    decodedDataJson = JSON.stringify(schemaEncoder.decodeData(data), (_, value) =>
+      typeof value === "bigint" ? value.toString() : value
+    );
+    
   } catch (error) {
     console.log("Error decoding data 53432", error);
   }
@@ -876,7 +879,10 @@ export async function updateDbFromEthTransaction(txId: string) {
     }
 
     const schemaEncoder = new SchemaEncoder(schema.schema);
-    decodedDataJson = JSON.stringify(schemaEncoder.decodeData(pkg.sig.message.data));
+    decodedDataJson = JSON.stringify(schemaEncoder.decodeData(pkg.sig.message.data), (_, value) =>
+      typeof value === "bigint" ? value.toString() : value
+    );
+
   } catch (error) {
     throw new Error("Error decoding offchain attestation data: " + error);
   }
