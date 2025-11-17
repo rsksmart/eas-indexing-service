@@ -13,6 +13,16 @@ import { ethers } from "ethers";
 
 require("dotenv").config();
 
+// Handle unhandled promise rejections (e.g., from internal polling errors)
+process.on("unhandledRejection", (reason: any, promise: Promise<any>) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);  
+});
+
+// Handle uncaught exceptions
+process.on("uncaughtException", (error: Error) => {
+  console.error("Uncaught Exception:", error); 
+});
+
 let running = false;
 let timeout: NodeJS.Timeout | null = null;
 
